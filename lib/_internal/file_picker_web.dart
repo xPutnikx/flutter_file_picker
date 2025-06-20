@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'dart:js_interop';
-import 'package:web/web.dart';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
+import 'package:path/path.dart' as p;
+import 'package:web/web.dart';
 
 class FilePickerWeb extends FilePicker {
   late Element _target;
@@ -12,14 +13,12 @@ class FilePickerWeb extends FilePicker {
 
   final int _readStreamChunkSize = 1000 * 1000; // 1 MB
 
-  static final FilePickerWeb platform = FilePickerWeb._();
-
   FilePickerWeb._() {
     _target = _ensureInitialized(_kFilePickerInputsDomId);
   }
 
   static void registerWith(Registrar registrar) {
-    FilePicker.platform = platform;
+    FilePicker.platform = FilePickerWeb._();
   }
 
   /// Initializes a DOM container where we can host input elements.
@@ -44,19 +43,21 @@ class FilePickerWeb extends FilePicker {
     List<String>? allowedExtensions,
     bool allowMultiple = false,
     Function(FilePickerStatus)? onFileLoading,
-    bool allowCompression = true,
+    @Deprecated(
+        'allowCompression is deprecated and has no effect. Use compressionQuality instead.')
+    bool allowCompression = false,
     bool withData = true,
     bool withReadStream = false,
     bool lockParentWindow = false,
     bool readSequential = false,
-    int compressionQuality = 20,
+    int compressionQuality = 0,
   }) async {
     if (type != FileType.custom && (allowedExtensions?.isNotEmpty ?? false)) {
       throw Exception(
           'You are setting a type [$type]. Custom extension filters are only allowed with FileType.custom, please change it or remove filters.');
     }
 
-    final Completer<List<PlatformFile>?> filesCompleter =
+    Completer<List<PlatformFile>?>? filesCompleter =
         Completer<List<PlatformFile>?>();
 
     String accept = _fileType(type, allowedExtensions);
@@ -88,9 +89,16 @@ class FilePickerWeb extends FilePicker {
         String? path,
         Stream<List<int>>? readStream,
       ) {
+        String? blobUrl;
+        if (bytes != null && bytes.isNotEmpty) {
+          final blob =
+              Blob([bytes.toJS].toJS, BlobPropertyBag(type: file.type));
+
+          blobUrl = URL.createObjectURL(blob);
+        }
         pickedFiles.add(PlatformFile(
           name: file.name,
-          path: path,
+          path: path ?? blobUrl,
           size: bytes != null ? bytes.length : file.size,
           bytes: bytes,
           readStream: readStream,
@@ -100,7 +108,7 @@ class FilePickerWeb extends FilePicker {
           if (onFileLoading != null) {
             onFileLoading(FilePickerStatus.done);
           }
-          filesCompleter.complete(pickedFiles);
+          filesCompleter?.complete(pickedFiles);
         }
       }
 
@@ -148,7 +156,7 @@ class FilePickerWeb extends FilePicker {
       Future.delayed(Duration(seconds: 1)).then((value) {
         if (!changeEventTriggered) {
           changeEventTriggered = true;
-          filesCompleter.complete(null);
+          filesCompleter?.complete(null);
         }
       });
     }
@@ -176,8 +184,52 @@ class FilePickerWeb extends FilePicker {
     }
 
     final List<PlatformFile>? files = await filesCompleter.future;
+    filesCompleter = null;
 
     return files == null ? null : FilePickerResult(files);
+  }
+
+  @override
+  Future<String?> saveFile({
+    String? dialogTitle,
+    String? fileName,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Uint8List? bytes,
+    bool lockParentWindow = false,
+  }) async {
+    if (bytes == null || bytes.isEmpty) {
+      throw ArgumentError(
+        'The bytes are required when saving a file on the web.',
+      );
+    }
+
+    if (fileName == null || fileName.isEmpty) {
+      throw ArgumentError(
+        'A file name is required when saving a file on the web.',
+      );
+    }
+
+    if (p.extension(fileName).isEmpty) {
+      throw ArgumentError(
+        'The file name should include a valid file extension.',
+      );
+    }
+
+    final blob = Blob([bytes.toJS].toJS);
+    final url = URL.createObjectURL(blob);
+
+    // Start a download by using a click event on an anchor element that contains the Blob.
+    HTMLAnchorElement()
+      ..href = url
+      ..target = 'blank' // Always open the file in a new tab.
+      ..download = fileName
+      ..click();
+
+    // Release the Blob URL after the download started.
+    URL.revokeObjectURL(url);
+    return null;
   }
 
   static String _fileType(FileType type, List<String>? allowedExtensions) {
@@ -218,16 +270,15 @@ class FilePickerWeb extends FilePicker {
       if (readerResult == null) {
         continue;
       }
-      // TODO: use `isA<JSArrayBuffer>()` when switching to Dart 3.4
+
       // Handle the ArrayBuffer type. This maps to a `ByteBuffer` in Dart.
-      if (readerResult.instanceOfString('ArrayBuffer')) {
+      if (readerResult.isA<JSArrayBuffer>()) {
         yield (readerResult as JSArrayBuffer).toDart.asUint8List();
         start += _readStreamChunkSize;
         continue;
       }
-      // TODO: use `isA<JSArray>()` when switching to Dart 3.4
-      // Handle the Array type.
-      if (readerResult.instanceOfString('Array')) {
+
+      if (readerResult.isA<JSArray>()) {
         // Assume this is a List<int>.
         yield (readerResult as JSArray).toDart.cast<int>();
         start += _readStreamChunkSize;

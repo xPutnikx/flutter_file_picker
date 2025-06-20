@@ -1,4 +1,5 @@
 @TestOn('windows')
+library;
 
 import 'dart:ffi';
 
@@ -22,13 +23,13 @@ void main() {
       expect(
         picker.fileTypeToFileFilter(FileType.audio, null),
         equals(
-            'Audios (*.aac,*.midi,*.mp3,*.ogg,*.wav)\x00*.aac;*.midi;*.mp3;*.ogg;*.wav\x00\x00'),
+            'Audios (*.aac,*.midi,*.mp3,*.ogg,*.wav,*.m4a)\x00*.aac;*.midi;*.mp3;*.ogg;*.wav;*.m4a\x00\x00'),
       );
 
       expect(
         picker.fileTypeToFileFilter(FileType.image, null),
         equals(
-          'Images (*.bmp,*.gif,*.jpeg,*.jpg,*.png)\x00*.bmp;*.gif;*.jpeg;*.jpg;*.png\x00\x00',
+          'Images (*.bmp,*.gif,*.jpeg,*.jpg,*.png,*.webp)\x00*.bmp;*.gif;*.jpeg;*.jpg;*.png;*.webp\x00\x00',
         ),
       );
 
